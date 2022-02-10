@@ -46,7 +46,10 @@ struct	mtop {
 
 #define MTSETBLK 20	/* set block length (SCSI) */
 #define MTSETDENSITY 21	/* set tape density (SCSI) */
-
+#define MTSEEK	22	/* seek to block (Tandberg, etc.) */
+#define MTTELL	23	/* tell block (Tandber, etc.) */
+#define MTSETDRVBUFFER 24 /* set the drive buffering according to SCSI-2 */
+			/* ordinary buffered operation with code 1 */
 
 
 /* structure for MTIOCGET - mag tape get status command */
@@ -78,6 +81,7 @@ struct	mtget {
 #define MT_ISTDC3610		0x06	/* Tandberg 6310, QIC-24 */
 #define MT_ISARCHIVE_VP60I	0x07	/* Archive VP60i, QIC-02 */
 #define MT_ISARCHIVE_2150L	0x08	/* Archive Viper 2150L */
+#define MT_ISARCHIVE_2060L	0x09	/* Archive Viper 2060L */
 #define MT_ISQIC02_ALL_FEATURES	0x0F	/* Generic QIC-02 with all features */
 #define MT_ISWT5099EEN24	0x11	/* Wangtek 5099-een24, 60MB, QIC-24 */
 #define MT_ISEVEREX_FT40A	0x32	/* Everex FT40A (QIC-40) */
@@ -98,6 +102,7 @@ struct mt_tape_info {
 	{MT_ISTDC3610,		"Tandberg TDC 3610, QIC-24"}, \
 	{MT_ISARCHIVE_VP60I,	"Archive VP60i, QIC-02"}, \
 	{MT_ISARCHIVE_2150L,	"Archive Viper 2150L"}, \
+	{MT_ISARCHIVE_2060L,	"Archive Viper 2060L"}, \
 	{MT_ISWT5099EEN24,	"Wangtek 5099-een24, 60MB"}, \
 	{MT_ISEVEREX_FT40A,	"Everex FT40A, QIC-40"}, \
 	{MT_ISSCSI1,		"Generic SCSI-1 tape"}, \
@@ -105,9 +110,18 @@ struct mt_tape_info {
 }
 
 
+/* structure for MTIOCPOS - mag tape get position command */
+
+struct	mtpos {
+	long 	mt_blkno;	/* current block number */
+};
+
+
 /* mag tape io control commands */
 #define	MTIOCTOP	_IOW('m', 1, struct mtop)	/* do a mag tape op */
 #define	MTIOCGET	_IOR('m', 2, struct mtget)	/* get tape status */
+#define	MTIOCPOS	_IOR('m', 3, struct mtpos)	/* get tape position */
+
 
 /* Generic Mag Tape (device independent) status macros for examining
  * mt_gstat -- HP-UX compatible.

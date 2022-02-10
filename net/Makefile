@@ -8,61 +8,44 @@
 # Note 2! The CFLAGS definition is now in the main makefile...
 
 # only these two lines should need to be changed to remove inet sockets.
-# (and the tcp/tcpip.o in net.o)
+# (and the inet/tcpip.o in net.o)
 
-SUBDIRS		= tcp
-SOCK_FLAGS	= -DINET_SOCKETS
+SUBDIRS     := unix inet
+
+SUBOBJS     := $(foreach f,$(SUBDIRS),$f/$f.o)
 
 .c.o:
-	$(CC) $(CFLAGS) $(SOCK_FLAGS) -c $<
+	$(CC) $(CFLAGS) -c $<
 .s.o:
 	$(AS) -o $*.o $<
 .c.s:
 	$(CC) $(CFLAGS) -S $<
 
-OBJS	=  socket.o unix.o 
+OBJS	=  Space.o ddi.o socket.o
 
-net.o: $(OBJS) subdirs
-	$(LD) -r -o net.o $(OBJS) tcp/tcpip.o
+all:		subdirs net.o
 
+net.o:		$(OBJS) network.a
+		$(LD) -r -o net.o $(OBJS) network.a
 
-subdirs: dummy
-	for i in $(SUBDIRS); do (cd $$i && echo $$i && $(MAKE)) || exit; done
+network.a:	$(SUBOBJS)
+		rm -f $@
+		ar rc $@ $(SUBOBJS)
+		ranlib $@
 
-clean:
-	rm -f core *.o *.a tmp_make
-	for i in *.c;do rm -f `basename $$i .c`.s;done
-	@for i in $(SUBDIRS); do (cd $$i && echo $$i && $(MAKE) clean) || exit; done
+subdirs:	dummy
+		set -e; for i in $(SUBDIRS); do $(MAKE) -C $$i; done
 
 dep:
-	sed '/\#\#\# Dependencies/q' < Makefile > tmp_make
-	$(CPP) -M *.c >> tmp_make
-	cp tmp_make Makefile
-	@for i in $(SUBDIRS); do (cd $$i && echo $$i && $(MAKE) dep) || exit; done
+		$(CPP) -M *.c > .depend
+		set -e; for i in $(SUBDIRS); do $(MAKE) -C $$i dep; done
 
 dummy:
 
-### Dependencies:
-socket.o : socket.c /usr/include/linux/signal.h /usr/include/linux/errno.h /usr/include/linux/sched.h \
-  /usr/include/linux/head.h /usr/include/linux/fs.h /usr/include/linux/limits.h \
-  /usr/include/linux/wait.h /usr/include/linux/types.h /usr/include/linux/dirent.h \
-  /usr/include/linux/vfs.h /usr/include/linux/pipe_fs_i.h /usr/include/linux/minix_fs_i.h \
-  /usr/include/linux/ext_fs_i.h /usr/include/linux/msdos_fs_i.h /usr/include/linux/iso_fs_i.h \
-  /usr/include/linux/minix_fs_sb.h /usr/include/linux/ext_fs_sb.h /usr/include/linux/msdos_fs_sb.h \
-  /usr/include/linux/iso_fs_sb.h /usr/include/linux/mm.h /usr/include/linux/kernel.h \
-  /usr/include/linux/time.h /usr/include/linux/param.h /usr/include/linux/resource.h \
-  /usr/include/linux/vm86.h /usr/include/linux/math_emu.h /usr/include/linux/stat.h \
-  /usr/include/linux/socket.h /usr/include/linux/fcntl.h /usr/include/linux/termios.h \
-  /usr/include/asm/system.h /usr/include/asm/segment.h kern_sock.h socketcall.h 
-unix.o : unix.c /usr/include/linux/signal.h /usr/include/linux/sched.h /usr/include/linux/head.h \
-  /usr/include/linux/fs.h /usr/include/linux/limits.h /usr/include/linux/wait.h \
-  /usr/include/linux/types.h /usr/include/linux/dirent.h /usr/include/linux/vfs.h \
-  /usr/include/linux/pipe_fs_i.h /usr/include/linux/minix_fs_i.h /usr/include/linux/ext_fs_i.h \
-  /usr/include/linux/msdos_fs_i.h /usr/include/linux/iso_fs_i.h /usr/include/linux/minix_fs_sb.h \
-  /usr/include/linux/ext_fs_sb.h /usr/include/linux/msdos_fs_sb.h /usr/include/linux/iso_fs_sb.h \
-  /usr/include/linux/mm.h /usr/include/linux/kernel.h /usr/include/linux/time.h \
-  /usr/include/linux/param.h /usr/include/linux/resource.h /usr/include/linux/vm86.h \
-  /usr/include/linux/math_emu.h /usr/include/linux/errno.h /usr/include/linux/string.h \
-  /usr/include/linux/stat.h /usr/include/linux/socket.h /usr/include/linux/un.h \
-  /usr/include/linux/fcntl.h /usr/include/linux/termios.h /usr/include/asm/system.h \
-  /usr/include/asm/segment.h kern_sock.h 
+#
+# include a dependency file if one exists
+#
+ifeq (.depend,$(wildcard .depend))
+include .depend
+endif
+
