@@ -60,7 +60,7 @@
 /*--------- MICROSOFT BUSMOUSE ITEMS -------------*/
 
 #define	MS_MSE_DATA_PORT	        0x23d
-#define	MS_MSE_SIGNATURE_PORT	        0x23d
+#define	MS_MSE_SIGNATURE_PORT	        0x23e
 #define	MS_MSE_CONTROL_PORT	        0x23c
 #define	MS_MSE_CONFIG_PORT		0x23f
 
@@ -82,27 +82,19 @@
 			    outb(MS_MSE_ENABLE_INTERRUPTS, MS_MSE_DATA_PORT);}
 
  
-struct mouse_status
-	{
+struct mouse_status {
 	char		buttons;
 	char		latch_buttons;
 	int		dx;
 	int		dy;	
-
 	int 		present;
 	int		ready;
 	int		active;
-
-	struct inode    *inode;
-	};
-
-/* Variable Definitions */
-extern int mse_busmouse_type;   /* to distinguish what type mouse we're working with */
-
+	struct wait_queue *wait;
+};
 
 /* Function Prototypes */
 extern long mouse_init(long);
-
 
 #endif
 

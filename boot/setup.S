@@ -1,5 +1,5 @@
 !
-!	setup.s		Copyright (C) 1991, 1992 Linus Torvalds
+!	setup.S		Copyright (C) 1991, 1992 Linus Torvalds
 !
 ! setup.s is responsible for getting the system data from the BIOS,
 ! and putting them into the appropriate places in system memory.
@@ -11,10 +11,16 @@
 ! system to read them from there before the area is overwritten
 ! for buffer-blocks.
 !
+! Move PS/2 aux init code to psaux.c
+! (troyer@saifr00.cfsat.Honeywell.COM) 03Oct92
+!
 
 ! NOTE! These had better be the same as in bootsect.s!
 #include <linux/config.h>
-#define NORMAL_VGA 0xffff
+
+#ifndef SVGA_MODE
+#define SVGA_MODE ASK_VGA
+#endif
 
 INITSEG  = DEF_INITSEG	! we move boot here - out of the way
 SYSSEG   = DEF_SYSSEG	! system loaded at 0x10000 (65536).
@@ -134,29 +140,6 @@ is_disk1:
 	int	0x11		! int 0x11: equipment determination
 	test	al,#0x04	! check if pointing device installed
 	jz	no_psmouse
-	mov	ax,#0xc201	! reset pointing device
-	int	0x15
-	jc	no_psmouse
-	mov	bh,#0x03	! 3 bytes/packet
-	mov	ax,#0xc205	! initialize pointing device
-	int	0x15
-	jc	no_psmouse
-	mov	ax,#0xc203	! set resolution
-	mov	bh,#0x03	! 8 counts/mm
-	int	0x15
-	jc	no_psmouse
-	mov	ax,#0xc206	! set scaling
-	mov	bh,0x02		! 2:1 scaling
-	int	0x15
-	jc	no_psmouse
-	mov	ax,#0xc202	! set sample rate
-	mov	bh,#0x05	! 100 reports per second
-	int	0x15
-	jc	no_psmouse
-	mov	bh,#0x01
-	mov	ax,#0xc200	! enable pointing device
-	int	0x15
-	jc	no_psmouse
 	mov	[0x1ff],#0xaa	! device present
 no_psmouse:
 
@@ -282,29 +265,50 @@ getkey:
 chsvga:	cld
 	push	ds
 	push	cs
+	mov	ax,[0x01fa]
 	pop	ds
+	mov	modesave,ax
 	mov 	ax,#0xc000
 	mov	es,ax
+	mov	ax,modesave
+	cmp	ax,#NORMAL_VGA
+	je	defvga
+	cmp	ax,#EXTENDED_VGA
+	je	extvga
+	cmp	ax,#ASK_VGA
+	jne	svga
 	lea	si,msg1
-#ifndef SVGA_MODE
 	call	prtstr
 flush:	in	al,#0x60		! Flush the keyboard buffer
 	cmp	al,#0x82
 	jb	nokey
 	jmp	flush
 nokey:	call getkey
-	cmp	al,#0x82
-	jb	nokey
-	cmp	al,#0xe0
-	ja	nokey
-	cmp	al,#0x9c
-	je	svga
-#endif
-#if !defined(SVGA_MODE) || SVGA_MODE == NORMAL_VGA
-	mov	ax,#0x5019
+	cmp	al,#0x9c		! enter ?
+	je	svga			! yes - svga selection
+	cmp	al,#0xb9		! space ?
+	jne	nokey			! no - repeat
+defvga:	mov	ax,#0x5019
 	pop	ds
 	ret
-#endif
+/* extended vga mode: 80x50 */
+extvga:
+	mov	ax,#0x1112
+	mov	bl,#0
+	int	0x10		! use 8x8 font set (50 lines on VGA)
+	mov	ax,#0x1200
+	mov	bl,#0x20
+	int	0x10		! use alternate print screen
+	mov	ax,#0x1201
+	mov	bl,#0x34
+	int	0x10		! turn off cursor emulation
+	mov	ah,#0x01
+	mov	cx,#0x0607
+	int	0x10		! turn on cursor (scan lines 6 to 7)
+	pop	ds
+	mov	ax,#0x5032	! return 80x50
+	ret
+/* svga modes */
 svga:	cld
 	lea 	si,idati		! Check ATI 'clues'
 	mov	di,#0x31
@@ -554,9 +558,11 @@ tbl:	pop	bx
 	call	prtstr
 	pop	si
 	add	cl,#0x80
-#if defined(SVGA_MODE) && SVGA_MODE != NORMAL_VGA
-	mov	al,#SVGA_MODE		! Preset SVGA mode 
-#else
+	mov	ax,modesave
+	cmp	ax,#ASK_VGA
+	je	nonum
+	cmp	ax,#NORMAL_VGA
+	jne	gotmode
 nonum:	call	getkey
 	cmp	al,#0x82
 	jb	nonum
@@ -568,8 +574,7 @@ nonum:	call	getkey
 zero:	sub	al,#0x0a
 nozero:	sub	al,#0x80
 	dec	al
-#endif
-	xor	ah,ah
+gotmode:	xor	ah,ah
 	add	di,ax
 	inc	di
 	push	ax
@@ -582,25 +587,7 @@ nozero:	sub	al,#0x80
 	pop	ds
 	ret
 novid7:
-	mov	ax,#0x1112
-	mov	bl,#0
-	int	0x10		! use 8x8 font set (50 lines on VGA)
-
-	mov	ax,#0x1200
-	mov	bl,#0x20
-	int	0x10		! use alternate print screen
-
-	mov	ax,#0x1201
-	mov	bl,#0x34
-	int	0x10		! turn off cursor emulation
-
-	mov	ah,#0x01
-	mov	cx,#0x0607
-	int	0x10		! turn on cursor (scan lines 6 to 7)
-
-	pop	ds
-	mov	ax,#0x5032	! return 80x50
-	ret
+	br extvga
 
 ! Routine that 'tabs' to next col.
 
@@ -694,7 +681,7 @@ gdt_48:
 	.word	0x800		! gdt limit=2048, 256 GDT entries
 	.word	512+gdt,0x9	! gdt base = 0X9xxxx
 
-msg1:		.ascii	"Press <RETURN> to see SVGA-modes available or any other key to continue."
+msg1:		.ascii	"Press <RETURN> to see SVGA-modes available or <SPACE> to continue."
 		db	0x0d, 0x0a, 0x0a, 0x00
 msg2:		.ascii	"Mode:  COLSxROWS:"
 		db	0x0d, 0x0a, 0x0a, 0x00
@@ -734,6 +721,7 @@ dsctrident:	.word 	0x501e, 0x502b, 0x503c, 0x8419, 0x841e, 0x842b, 0x843c
 dsctseng:	.word	0x503c, 0x6428, 0x8419, 0x841c, 0x842c
 dscvideo7:	.word	0x502b, 0x503c, 0x643c, 0x8419, 0x842c, 0x841c
 dscoakvga:	.word	0x2819, 0x5019, 0x843c, 0x8419, 0x842C
+modesave:	.word	SVGA_MODE
 	
 .text
 endtext:
