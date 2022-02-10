@@ -1,7 +1,7 @@
 #ifndef _BLK_H
 #define _BLK_H
 
-#define NR_BLK_DEV	7
+#define NR_BLK_DEV	10
 /*
  * NR_REQUEST is the number of entries in the request-queue.
  * NOTE that writes may use only the low 2/3 of these: reads
@@ -29,6 +29,7 @@ struct request {
 	char * buffer;
 	struct task_struct * waiting;
 	struct buffer_head * bh;
+	struct buffer_head * bhtail;
 	struct request * next;
 };
 
@@ -88,6 +89,24 @@ extern int * blk_size[NR_BLK_DEV];
 #define DEVICE_ON(device)
 #define DEVICE_OFF(device)
 
+#elif (MAJOR_NR == 8)
+/* scsi disk */
+#define DEVICE_NAME "scsidisk"
+#define DEVICE_INTR do_sd  
+#define DEVICE_REQUEST do_sd_request
+#define DEVICE_NR(device) (MINOR(device) >> 4)
+#define DEVICE_ON(device)
+#define DEVICE_OFF(device)
+
+#elif (MAJOR_NR == 9)
+/* scsi tape */
+#define DEVICE_NAME "scsitape"
+#define DEVICE_INTR do_st  
+#define DEVICE_REQUEST do_st_request
+#define DEVICE_NR(device) (MINOR(device))
+#define DEVICE_ON(device)
+#define DEVICE_OFF(device)
+
 #elif
 /* unknown blk device */
 #error "unknown blk device"
@@ -130,22 +149,40 @@ extern inline void unlock_buffer(struct buffer_head * bh)
 	wake_up(&bh->b_wait);
 }
 
-extern inline void end_request(int uptodate)
+static void end_request(int uptodate)
 {
-	DEVICE_OFF(CURRENT->dev);
-	if (CURRENT->bh) {
-		CURRENT->bh->b_uptodate = uptodate;
-		unlock_buffer(CURRENT->bh);
-	}
+	struct request * req;
+	struct buffer_head * bh;
+
+	req = CURRENT;
+	req->errors = 0;
 	if (!uptodate) {
 		printk(DEVICE_NAME " I/O error\n\r");
-		printk("dev %04x, block %d\n\r",CURRENT->dev,
-			CURRENT->bh->b_blocknr);
+		printk("dev %04x, sector %d\n\r",req->dev,req->sector);
+		req->nr_sectors--;
+		req->nr_sectors &= ~1;
+		req->sector += 2;
+		req->sector &= ~1;		
 	}
-	wake_up(&CURRENT->waiting);
+	if (bh = req->bh) {
+		req->bh = bh->b_reqnext;
+		bh->b_reqnext = NULL;
+		bh->b_uptodate = uptodate;
+		unlock_buffer(bh);
+		if (bh = req->bh) {
+			if (req->nr_sectors < 2) {
+				req->nr_sectors = 2;
+				printk("end_request: buffer-list destroyed\n");
+			}
+			req->buffer = bh->b_data;
+			return;
+		}
+	}
+	DEVICE_OFF(req->dev);
+	CURRENT = req->next;
+	wake_up(&req->waiting);
+	req->dev = -1;
 	wake_up(&wait_for_request);
-	CURRENT->dev = -1;
-	CURRENT = CURRENT->next;
 }
 
 #ifdef DEVICE_INTR

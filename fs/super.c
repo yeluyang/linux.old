@@ -10,11 +10,13 @@
 #include <linux/config.h>
 #include <linux/sched.h>
 #include <linux/minix_fs.h>
+#include <linux/ext_fs.h>
 #include <linux/kernel.h>
+#include <linux/stat.h>
 #include <asm/system.h>
+#include <asm/segment.h>
 
 #include <errno.h>
-#include <sys/stat.h>
 
 int sync_dev(int dev);
 void wait_for_keypress(void);
@@ -33,6 +35,7 @@ int ROOT_DEV = 0;
 
 static struct file_system_type file_systems[] = {
 	{minix_read_super,"minix"},
+	{ext_read_super,"ext"},
 	{NULL,NULL}
 };
 
@@ -146,7 +149,9 @@ int sys_umount(char * dev_name)
 	struct super_block * sb;
 	int dev;
 
-	if (!(inode=namei(dev_name)))
+	if (!suser())
+		return -EPERM;
+	if (!(inode = namei(dev_name)))
 		return -ENOENT;
 	dev = inode->i_rdev;
 	if (!S_ISBLK(inode->i_mode)) {
@@ -171,18 +176,24 @@ int sys_umount(char * dev_name)
 	sb->s_covered = NULL;
 	iput(sb->s_mounted);
 	sb->s_mounted = NULL;
+	if (sb->s_op && sb->s_op->write_super && sb->s_dirt)
+		sb->s_op->write_super (sb);
         put_super(dev);
         sync_dev(dev);
 	return 0;
 }
 
-int sys_mount(char * dev_name, char * dir_name, int rw_flag)
+int sys_mount(char * dev_name, char * dir_name, char * type, int rw_flag)
 {
 	struct inode * dev_i, * dir_i;
 	struct super_block * sb;
 	int dev;
+	char tmp[100],*t;
+	int i;
 
-	if (!(dev_i=namei(dev_name)))
+	if (!suser())
+		return -EPERM;
+	if (!(dev_i = namei(dev_name)))
 		return -ENOENT;
 	dev = dev_i->i_rdev;
 	if (!S_ISBLK(dev_i->i_mode)) {
@@ -204,7 +215,14 @@ int sys_mount(char * dev_name, char * dir_name, int rw_flag)
 		iput(dir_i);
 		return -EPERM;
 	}
-	if (!(sb=read_super(dev,"minix",NULL))) {
+	if (type) {
+		i = 0;
+		while (i < 100 && (tmp[i] = get_fs_byte(type++)))
+			i++;
+		t = tmp;
+	} else
+		t = "minix";
+	if (!(sb = read_super(dev,t,NULL))) {
 		iput(dir_i);
 		return -EBUSY;
 	}
