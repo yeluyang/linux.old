@@ -1,5 +1,5 @@
 !
-!	setup.s		(C) 1991 Linus Torvalds
+!	setup.s		Copyright (C) 1991, 1992 Linus Torvalds
 !
 ! setup.s is responsible for getting the system data from the BIOS,
 ! and putting them into the appropriate places in system memory.
@@ -14,6 +14,7 @@
 
 ! NOTE! These had better be the same as in bootsect.s!
 #include <linux/config.h>
+#define NORMAL_VGA 0xffff
 
 INITSEG  = DEF_INITSEG	! we move boot here - out of the way
 SYSSEG   = DEF_SYSSEG	! system loaded at 0x10000 (65536).
@@ -60,6 +61,12 @@ start:
 	mov	ax,#0x5019
 	cmp	bl,#0x10
 	je	novga
+	mov	ax,#0x1a00	! Added check for EGA/VGA discrimination
+	int	0x10
+	mov	bx,ax
+	mov	ax,#0x5019
+	cmp	bl,#0x1a	! 1a means VGA, anything else EGA or lower
+	jne	novga	
 	call	chsvga
 novga:	mov	[14],ax
 	mov	ah,#0x03	! read cursor pos
@@ -118,6 +125,40 @@ no_disk1:
 	rep
 	stosb
 is_disk1:
+
+! check for PS/2 pointing device
+
+	mov	ax,#INITSEG
+	mov	ds,ax
+	mov	[0x1ff],#0	! default is no pointing device
+	int	0x11		! int 0x11: equipment determination
+	test	al,#0x04	! check if pointing device installed
+	jz	no_psmouse
+	mov	ax,#0xc201	! reset pointing device
+	int	0x15
+	jc	no_psmouse
+	mov	bh,#0x03	! 3 bytes/packet
+	mov	ax,#0xc205	! initialize pointing device
+	int	0x15
+	jc	no_psmouse
+	mov	ax,#0xc203	! set resolution
+	mov	bh,#0x03	! 8 counts/mm
+	int	0x15
+	jc	no_psmouse
+	mov	ax,#0xc206	! set scaling
+	mov	bh,0x02		! 2:1 scaling
+	int	0x15
+	jc	no_psmouse
+	mov	ax,#0xc202	! set sample rate
+	mov	bh,#0x05	! 100 reports per second
+	int	0x15
+	jc	no_psmouse
+	mov	bh,#0x01
+	mov	ax,#0xc200	! enable pointing device
+	int	0x15
+	jc	no_psmouse
+	mov	[0x1ff],#0xaa	! device present
+no_psmouse:
 
 ! now we want to move to protected mode ...
 
@@ -189,9 +230,10 @@ end_move:
 	out	#0xA1,al
 	.word	0x00eb,0x00eb
 	mov	al,#0xFF		! mask off all interrupts for now
-	out	#0x21,al
-	.word	0x00eb,0x00eb
 	out	#0xA1,al
+	.word	0x00eb,0x00eb
+	mov	al,#0xFB		! mask all irq's but irq2 which
+	out	#0x21,al		! is cascaded
 
 ! well, that certainly wasn't fun :-(. Hopefully it works, and we don't
 ! need no steenking BIOS anyway (except for the initial loading :-).
@@ -244,6 +286,7 @@ chsvga:	cld
 	mov 	ax,#0xc000
 	mov	es,ax
 	lea	si,msg1
+#ifndef SVGA_MODE
 	call	prtstr
 flush:	in	al,#0x60		! Flush the keyboard buffer
 	cmp	al,#0x82
@@ -256,9 +299,12 @@ nokey:	call getkey
 	ja	nokey
 	cmp	al,#0x9c
 	je	svga
+#endif
+#if !defined(SVGA_MODE) || SVGA_MODE == NORMAL_VGA
 	mov	ax,#0x5019
 	pop	ds
 	ret
+#endif
 svga:	cld
 	lea 	si,idati		! Check ATI 'clues'
 	mov	di,#0x31
@@ -385,6 +431,17 @@ l1:	inc	si
 	lea	cx,selmod
 	jmp	cx
 nogen:	cld
+	lea	si,idoakvga
+	mov	di,#0x08
+	mov	cx,#0x08
+	repe
+	cmpsb
+	jne	nooak
+	lea	si,dscoakvga
+	lea	di,mooakvga
+	lea	cx,selmod
+	jmp	cx
+nooak:	cld
 	lea	si,idparadise		! Check Paradise 'clues'
 	mov	di,#0x7d
 	mov	cx,#0x04
@@ -497,6 +554,9 @@ tbl:	pop	bx
 	call	prtstr
 	pop	si
 	add	cl,#0x80
+#if defined(SVGA_MODE) && SVGA_MODE != NORMAL_VGA
+	mov	al,#SVGA_MODE		! Preset SVGA mode 
+#else
 nonum:	call	getkey
 	cmp	al,#0x82
 	jb	nonum
@@ -508,6 +568,7 @@ nonum:	call	getkey
 zero:	sub	al,#0x0a
 nozero:	sub	al,#0x80
 	dec	al
+#endif
 	xor	ah,ah
 	add	di,ax
 	inc	di
@@ -644,6 +705,7 @@ idati:		.ascii	"761295520"
 idcandt:	.byte	0xa5
 idgenoa:	.byte	0x77, 0x00, 0x66, 0x99
 idparadise:	.ascii	"VGA="
+idoakvga:	.ascii  "OAK VGA "
 
 ! Manufacturer:	  Numofmodes:	Mode:
 
@@ -657,6 +719,7 @@ moparadise:	.byte	0x02,	0x55, 0x54
 motrident:	.byte	0x07,	0x50, 0x51, 0x52, 0x57, 0x58, 0x59, 0x5a
 motseng:	.byte	0x05,	0x26, 0x2a, 0x23, 0x24, 0x22
 movideo7:	.byte	0x06,	0x40, 0x43, 0x44, 0x41, 0x42, 0x45
+mooakvga:	.byte	0x05,	0x00, 0x07, 0x4f, 0x50, 0x51
 
 !			msb = Cols lsb = Rows:
 
@@ -670,6 +733,7 @@ dscparadise:	.word	0x8419, 0x842b
 dsctrident:	.word 	0x501e, 0x502b, 0x503c, 0x8419, 0x841e, 0x842b, 0x843c
 dsctseng:	.word	0x503c, 0x6428, 0x8419, 0x841c, 0x842c
 dscvideo7:	.word	0x502b, 0x503c, 0x643c, 0x8419, 0x842c, 0x841c
+dscoakvga:	.word	0x2819, 0x5019, 0x843c, 0x8419, 0x842C
 	
 .text
 endtext:

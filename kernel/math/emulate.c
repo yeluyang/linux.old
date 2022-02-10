@@ -1,7 +1,7 @@
 /*
  * linux/kernel/math/emulate.c
  *
- * (C) 1991 Linus Torvalds
+ * Copyright (C) 1991, 1992 Linus Torvalds
  */
 
 /*
@@ -32,7 +32,7 @@
 
 #ifdef KERNEL_MATH_EMULATION
 
-#include <signal.h>
+#include <linux/signal.h>
 
 #define __ALIGNED_TEMP_REAL 1
 #include <linux/math_emu.h>
@@ -62,6 +62,9 @@ static void do_emu(struct info * info)
 	else
 		I387.swd &= 0x7fff;
 	ORIG_EIP = EIP;
+/* We cannot handle emulation in v86-mode */
+	if (EFLAGS & 0x00020000)
+		math_abort(info,SIGILL);
 /* 0x0007 means user code space */
 	if (CS != 0x000F) {
 		printk("math_emulate: %04x:%08x\n\r",CS,EIP);
@@ -537,7 +540,7 @@ static temp_real_unaligned * __st(int i)
 
 #else /* no math emulation */
 
-#include <signal.h>
+#include <linux/signal.h>
 #include <linux/sched.h>
 
 void math_emulate(long ___false)

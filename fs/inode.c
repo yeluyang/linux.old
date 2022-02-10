@@ -1,14 +1,14 @@
 /*
  *  linux/fs/inode.c
  *
- *  (C) 1991  Linus Torvalds
+ *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
-#include <linux/string.h>
 #include <linux/stat.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/string.h>
 
 #include <asm/system.h>
 
@@ -117,8 +117,8 @@ void iput(struct inode * inode)
 		return;
 	}
 	if (inode->i_pipe) {
-		wake_up(&inode->i_wait);
-		wake_up(&inode->i_wait2);
+		wake_up(&PIPE_READ_WAIT(*inode));
+		wake_up(&PIPE_WRITE_WAIT(*inode));
 	}
 repeat:
 	if (inode->i_count>1) {
@@ -126,8 +126,9 @@ repeat:
 		return;
 	}
 	if (inode->i_pipe) {
-		free_page(inode->i_size);
-		inode->i_size = 0;
+		unsigned long page = (unsigned long) PIPE_BASE(*inode);
+		PIPE_BASE(*inode) = NULL;
+		free_page(page);
 	}
 	if (!inode->i_dev) {
 		inode->i_count--;
@@ -188,11 +189,12 @@ struct inode * get_pipe_inode(void)
 
 	if (!(inode = get_empty_inode()))
 		return NULL;
-	if (!(inode->i_size = get_free_page())) {
+	if (!(PIPE_BASE(*inode) = (char *) get_free_page(GFP_USER))) {
 		inode->i_count = 0;
 		return NULL;
 	}
 	inode->i_count = 2;	/* sum of readers/writers */
+	PIPE_READ_WAIT(*inode) = PIPE_WRITE_WAIT(*inode) = NULL;
 	PIPE_HEAD(*inode) = PIPE_TAIL(*inode) = 0;
 	PIPE_READERS(*inode) = PIPE_WRITERS(*inode) = 1;
 	inode->i_pipe = 1;
@@ -252,6 +254,7 @@ struct inode * iget(int dev,int nr)
 	}
 	inode->i_dev = dev;
 	inode->i_ino = nr;
+	inode->i_flags = inode->i_sb->s_flags;
 	read_inode(inode);
 	return inode;
 }

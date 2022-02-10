@@ -1,28 +1,25 @@
 /*
  *  linux/fs/ext/file.c
  *
- *  (C) 1992 Remy Card (card@masi.ibp.fr)
+ *  Copyright (C) 1992 Remy Card (card@masi.ibp.fr)
  *
  *  from
  *
  *  linux/fs/minix/file.c
  *
- *  (C) 1991 Linus Torvalds
+ *  Copyright (C) 1991, 1992 Linus Torvalds
  *
  *  ext regular file handling primitives
  */
 
-#include <errno.h>
-
-#include <sys/dirent.h>
-
 #include <asm/segment.h>
 #include <asm/system.h>
 
-#include <linux/fcntl.h>
 #include <linux/sched.h>
 #include <linux/ext_fs.h>
 #include <linux/kernel.h>
+#include <linux/errno.h>
+#include <linux/fcntl.h>
 #include <linux/stat.h>
 
 #define	NBUF	16
@@ -32,6 +29,14 @@
 
 #include <linux/fs.h>
 #include <linux/ext_fs.h>
+
+static inline void wait_on_buffer(struct buffer_head * bh)
+{
+	cli();
+	while (bh->b_lock)
+		sleep_on(&bh->b_wait);
+	sti();
+}
 
 static int ext_file_read(struct inode *, struct file *, char *, int);
 static int ext_file_write(struct inode *, struct file *, char *, int);
@@ -68,17 +73,9 @@ struct inode_operations ext_file_inode_operations = {
 	ext_truncate		/* truncate */
 };
 
-static inline void wait_on_buffer(struct buffer_head * bh)
-{
-	cli();
-	while (bh->b_lock)
-		sleep_on(&bh->b_wait);
-	sti();
-}
-
 static int ext_file_read(struct inode * inode, struct file * filp, char * buf, int count)
 {
-	int read,left,chars,nr;
+	int read,left,chars;
 	int block, blocks, offset;
 	struct buffer_head ** bhb, ** bhe;
 	struct buffer_head * buflist[NBUF];
@@ -107,12 +104,9 @@ static int ext_file_read(struct inode * inode, struct file * filp, char * buf, i
 	do {
 		if (blocks) {
 			--blocks;
-			if (nr = ext_bmap(inode,block++)) {
-				*bhb = getblk(inode->i_dev,nr);
-				if (!(*bhb)->b_uptodate)
-					ll_rw_block(READ,*bhb);
-			} else
-				*bhb = NULL;
+			*bhb = ext_getblk(inode,block++,0);
+			if (*bhb && !(*bhb)->b_uptodate)
+				ll_rw_block(READ,*bhb);
 
 			if (++bhb == &buflist[NBUF])
 				bhb = buflist;
@@ -153,15 +147,17 @@ static int ext_file_read(struct inode * inode, struct file * filp, char * buf, i
 	} while (left > 0);
 	if (!read)
 		return -EIO;
-	inode->i_atime = CURRENT_TIME;
-	inode->i_dirt = 1;
+	if (!IS_RDONLY(inode)) {
+		inode->i_atime = CURRENT_TIME;
+		inode->i_dirt = 1;
+	}
 	return read;
 }
 
 static int ext_file_write(struct inode * inode, struct file * filp, char * buf, int count)
 {
 	off_t pos;
-	int written,block,c;
+	int written,c;
 	struct buffer_head * bh;
 	char * p;
 
@@ -183,7 +179,8 @@ static int ext_file_write(struct inode * inode, struct file * filp, char * buf, 
 		pos = filp->f_pos;
 	written = 0;
 	while (written<count) {
-		if (!(block = ext_create_block(inode,pos/BLOCK_SIZE))) {
+		bh = ext_getblk(inode,pos/BLOCK_SIZE,1);
+		if (!bh) {
 			if (!written)
 				written = -ENOSPC;
 			break;
@@ -191,14 +188,15 @@ static int ext_file_write(struct inode * inode, struct file * filp, char * buf, 
 		c = BLOCK_SIZE - (pos % BLOCK_SIZE);
 		if (c > count-written)
 			c = count-written;
-		if (c == BLOCK_SIZE)
-			bh = getblk(inode->i_dev, block);
-		else
-			bh = bread(inode->i_dev,block);
-		if (!bh) {
-			if (!written)
-				written = -EIO;
-			break;
+		if (c != BLOCK_SIZE && !bh->b_uptodate) {
+			ll_rw_block(READ,bh);
+			wait_on_buffer(bh);
+			if (!bh->b_uptodate) {
+				brelse(bh);
+				if (!written)
+					written = -EIO;
+				break;
+			}
 		}
 		p = (pos % BLOCK_SIZE) + bh->b_data;
 		pos += c;

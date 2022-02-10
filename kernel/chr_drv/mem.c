@@ -1,15 +1,15 @@
 /*
  *  linux/kernel/chr_drv/mem.c
  *
- *  (C) 1991  Linus Torvalds
+ *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
-#include <errno.h>
-#include <sys/types.h>
-
+#include <linux/types.h>
+#include <linux/errno.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/tty.h>
+#include <linux/mouse.h>
 
 #include <asm/segment.h>
 #include <asm/io.h>
@@ -26,101 +26,29 @@ static int write_ram(struct inode * inode, struct file * file,char * buf, int co
 
 static int read_mem(struct inode * inode, struct file * file,char * buf, int count)
 {
-	unsigned long addr;
-	char *tmp;
-	unsigned long pde, pte, page;
-	int i;
-
-	if (count < 0)
-		return -EINVAL;
-	addr = file->f_pos;
-	tmp = buf;
-	while (count > 0) {
-		pde = (unsigned long) pg_dir + (addr >> 20 & 0xffc);
-		if (!((pte = *((unsigned long *) pde)) & 1))
-			break;
-		pte &= 0xfffff000;
-		pte += (addr >> 10) & 0xffc;
-		if (((page = *((unsigned long *) pte)) & 1) == 0)
-			break;
-/*
-		if ((page & 2) == 0)
-			un_wp_page((unsigned long *) pte);
-*/
-		page &= 0xfffff000;
-		page += addr & 0xfff;
-		i = 4096-(addr & 0xfff);
-		if (i > count)
-			i = count;
-		memcpy_tofs(tmp,(void *) page,i);
-		addr += i;
-		tmp += i;
-		count -= i;
-	}
-	file->f_pos = addr;
-	return tmp-buf;
-}
-
-static int write_mem(struct inode * inode, struct file * file,char * buf, int count)
-{
-	unsigned long addr;
-	char *tmp;
-	unsigned long pde, pte, page;
-	int i;
-
-	if (count < 0)
-		return -EINVAL;
-	addr = file->f_pos;
-	tmp = buf;
-	while (count > 0) {
-		pde = (unsigned long) pg_dir + (addr >> 20 & 0xffc);
-		if (!((pte = *((unsigned long *) pde)) & 1))
-			break;
-		pte &= 0xfffff000;
-		pte += (addr >> 10) & 0xffc;
-		if (((page = *((unsigned long *) pte)) & 1) == 0)
-			break;
-		if ((page & 2) == 0)
-			un_wp_page((unsigned long *) pte);
-		page &= 0xfffff000;
-		page += addr & 0xfff;
-		i = 4096-(addr & 0xfff);
-		if (i > count)
-			i = count;
-		memcpy_fromfs((void *) page,tmp,i);
-		addr += i;
-		tmp += i;
-		count -= i;
-	}
-	file->f_pos = addr;
-	return tmp-buf;
-}
-
-static int read_kmem(struct inode * inode, struct file * file,char * buf, int count)
-{
 	unsigned long p = file->f_pos;
 
 	if (count < 0)
 		return -EINVAL;
-	if (p >= HIGH_MEMORY)
+	if (p >= high_memory)
 		return 0;
-	if (count > HIGH_MEMORY - p)
-		count = HIGH_MEMORY - p;
+	if (count > high_memory - p)
+		count = high_memory - p;
 	memcpy_tofs(buf,(void *) p,count);
 	file->f_pos += count;
 	return count;
 }
 
-static int write_kmem(struct inode * inode, struct file * file,char * buf, int count)
+static int write_mem(struct inode * inode, struct file * file,char * buf, int count)
 {
 	unsigned long p = file->f_pos;
 
 	if (count < 0)
 		return -EINVAL;
-	if (p >= HIGH_MEMORY)
+	if (p >= high_memory)
 		return 0;
-	if (count > HIGH_MEMORY - p)
-		count = HIGH_MEMORY - p;
+	if (count > high_memory - p)
+		count = high_memory - p;
 	memcpy_fromfs((void *) p,buf,count);
 	file->f_pos += count;
 	return count;
@@ -190,6 +118,9 @@ static int mem_lseek(struct inode * inode, struct file * file, off_t offset, int
 	return file->f_pos;
 }
 
+#define read_kmem read_mem
+#define write_kmem write_mem
+
 static int mem_read(struct inode * inode, struct file * file, char * buf, int count)
 {
 	switch (MINOR(inode->i_rdev)) {
@@ -246,5 +177,6 @@ long chr_dev_init(long mem_start, long mem_end)
 	chrdev_fops[1] = &mem_fops;
 	mem_start = tty_init(mem_start);
 	mem_start = lp_init(mem_start);
+	mem_start = mouse_init(mem_start);
 	return mem_start;
 }

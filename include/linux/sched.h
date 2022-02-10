@@ -1,34 +1,45 @@
-#ifndef _SCHED_H
-#define _SCHED_H
+#ifndef _LINUX_SCHED_H
+#define _LINUX_SCHED_H
 
 #define HZ 100
 
+/*
+ * This is the maximum nr of tasks - change it if you need to
+ */
 #define NR_TASKS	64
-#define TASK_SIZE	0x04000000
-#define LIBRARY_SIZE	0x00400000
+
+/*
+ * User space process size: 3GB. This is hardcoded into a few places,
+ * so don't change it unless you know what you are doing.
+ */
+#define TASK_SIZE	0xc0000000
 
 /*
  * Size of io_bitmap in longwords: 32 is ports 0-0x3ff.
  */
 #define IO_BITMAP_SIZE	32
 
-#if (TASK_SIZE & 0x3fffff)
-#error "TASK_SIZE must be multiple of 4M"
-#endif
+/*
+ * These are the constant used to fake the fixed-point load-average
+ * counting. Some notes:
+ *  - 11 bit fractions expand to 22 bits by the multiplies: this gives
+ *    a load-average precision of 10 bits integer + 11 bits fractional
+ *  - if you want to count load-averages more often, you need more
+ *    precision, or rounding will get you. With 2-second counting freq,
+ *    the EXP_n values would be 1981, 2034 and 2043 if still using only
+ *    11 bit fractions.
+ */
+#define FSHIFT		11		/* nr of bits of precision */
+#define FIXED_1		(1<<FSHIFT)	/* 1.0 as fixed-point */
+#define LOAD_FREQ	(5*HZ)		/* 5 sec intervals */
+#define EXP_1		1884		/* 1/exp(5sec/1min) as fixed-point */
+#define EXP_5		2014		/* 1/exp(5sec/5min) */
+#define EXP_15		2037		/* 1/exp(5sec/15min) */
 
-#if (LIBRARY_SIZE & 0x3fffff)
-#error "LIBRARY_SIZE must be a multiple of 4M"
-#endif
-
-#if (LIBRARY_SIZE >= (TASK_SIZE/2))
-#error "LIBRARY_SIZE too damn big!"
-#endif
-
-#if (((TASK_SIZE>>16)*NR_TASKS) != 0x10000)
-#error "TASK_SIZE*NR_TASKS must be 4GB"
-#endif
-
-#define LIBRARY_OFFSET (TASK_SIZE - LIBRARY_SIZE)
+#define CALC_LOAD(load,exp,n) \
+	load *= exp; \
+	load += n*(FIXED_1-exp); \
+	load >>= FSHIFT;
 
 #define CT_TO_SECS(x)	((x) / HZ)
 #define CT_TO_USECS(x)	(((x) % HZ) * 1000000/HZ)
@@ -39,10 +50,11 @@
 #include <linux/head.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
-#include <sys/param.h>
-#include <sys/time.h>
-#include <sys/resource.h>
-#include <signal.h>
+#include <linux/signal.h>
+#include <linux/time.h>
+#include <linux/param.h>
+#include <linux/resource.h>
+#include <linux/vm86.h>
 
 #if (NR_OPEN > 32)
 #error "Currently the close-on-exec-flags and select masks are in one long, max 32 files/proc"
@@ -115,9 +127,11 @@ struct task_struct {
 	long signal;
 	struct sigaction sigaction[32];
 	long blocked;	/* bitmap of masked signals */
+	unsigned long saved_kernel_stack;
 /* various fields */
 	int exit_code;
-	int dumpable;
+	int dumpable:1;
+	int swappable:1;
 	unsigned long start_code,end_code,end_data,brk,start_stack;
 	long pid,pgrp,session,leader;
 	int	groups[NGROUPS];
@@ -128,9 +142,10 @@ struct task_struct {
 	 */
 	struct task_struct *p_opptr,*p_pptr, *p_cptr, *p_ysptr, *p_osptr;
 	/*
-	 * sleep makes a singly linked list with this.
+	 * For ease of programming... Normal sleeps don't need to
+	 * keep track of a wait-queue: every task has an entry of it's own
 	 */
-	struct task_struct *next_wait;
+	struct wait_queue wait;
 	unsigned short uid,euid,suid;
 	unsigned short gid,egid,sgid;
 	unsigned long timeout;
@@ -144,6 +159,8 @@ struct task_struct {
 	unsigned short used_math;
 	unsigned short rss;	/* number of resident pages */
 	char comm[8];
+	struct vm86_struct * vm86_info;
+	unsigned long screen_bitmap;
 /* file system info */
 	int link_count;
 	int tty;		/* -1 if no tty, so it must be signed */
@@ -155,6 +172,7 @@ struct task_struct {
 		struct inode * library;
 		unsigned long start;
 		unsigned long length;
+		unsigned long bss;
 	} libraries[MAX_SHARED_LIBS];
 	int numlibraries;
 	struct file * filp[NR_OPEN];
@@ -171,9 +189,6 @@ struct task_struct {
 #define PF_ALIGNWARN	0x00000001	/* Print alignment warning msgs */
 					/* Not implemented yet, only for 486*/
 #define PF_PTRACED	0x00000010	/* set if ptrace (0) has been called. */
-#define PF_VM86		0x00000020	/* set if process can execute a vm86 */
-					/* task. */
-                                        /* not impelmented. */
 
 /*
  *  INIT_TASK is used to set up the first task table, touch at
@@ -181,11 +196,12 @@ struct task_struct {
  */
 #define INIT_TASK \
 /* state etc */	{ 0,15,15, \
-/* signals */	0,{{},},0, \
-/* ec,brk... */	0,0,0,0,0,0,0, \
+/* signals */	0,{{},},0,0, \
+/* ec,brk... */	0,0,0,0,0,0,0,0, \
 /* pid etc.. */	0,0,0,0, \
 /* suppl grps*/ {NOGROUP,}, \
-/* proc links*/ &init_task.task,&init_task.task,NULL,NULL,NULL,NULL, \
+/* proc links*/ &init_task.task,&init_task.task,NULL,NULL,NULL, \
+/* wait queue*/ {&init_task.task,NULL}, \
 /* uid etc */	0,0,0,0,0,0, \
 /* timeout */	0,0,0,0,0,0,0,0,0,0,0,0, \
 /* min_flt */	0,0,0,0, \
@@ -196,15 +212,16 @@ struct task_struct {
 /* math */	0, \
 /* rss */	2, \
 /* comm */	"swapper", \
+/* vm86_info */	NULL, 0, \
 /* fs info */	0,-1,0022,NULL,NULL,NULL, \
 /* libraries */	{ { NULL, 0, 0}, }, 0, \
 /* filp */	{NULL,}, 0, \
 		{ \
 			{0,0}, \
-/* ldt */		{0x9f,0xc0fa00}, \
-			{0x9f,0xc0f200} \
+/* ldt */		{0x9f,0xc0c0fa00}, \
+			{0x9f,0xc0c0f200} \
 		}, \
-/*tss*/	{0,PAGE_SIZE+(long)&init_task,0x10,0,0,0,0,(long)&pg_dir,\
+/*tss*/	{0,PAGE_SIZE+(long)&init_task,0x10,0,0,0,0,(long)&swapper_pg_dir,\
 	 0,0,0,0,0,0,0,0, \
 	 0,0,0x17,0x17,0x17,0x17,0x17,0x17, \
 	 _LDT(0),0x80000000,{0xffffffff}, \
@@ -218,15 +235,23 @@ extern struct task_struct *current;
 extern unsigned long volatile jiffies;
 extern unsigned long startup_time;
 extern int jiffies_offset;
+extern int need_resched;
 
 #define CURRENT_TIME (startup_time+(jiffies+jiffies_offset)/HZ)
 
 extern void add_timer(long jiffies, void (*fn)(void));
-extern void sleep_on(struct task_struct ** p);
+
+extern void sleep_on(struct wait_queue ** p);
+extern void interruptible_sleep_on(struct wait_queue ** p);
+extern void wake_up(struct wait_queue ** p);
+extern void wake_one_task(struct task_struct * p);
+
 extern int send_sig(long sig,struct task_struct * p,int priv);
-extern void interruptible_sleep_on(struct task_struct ** p);
-extern void wake_up(struct task_struct ** p);
 extern int in_group_p(gid_t grp);
+
+extern int request_irq(unsigned int irq,void (*handler)(int));
+extern void free_irq(unsigned int irq);
+extern int irqaction(unsigned int irq,struct sigaction * new);
 
 /*
  * Entry into gdt where to find first TSS. 0-nul, 1-cs, 2-ds, 3-syscall
@@ -255,8 +280,10 @@ struct {long a,b;} __tmp; \
 __asm__("cmpl %%ecx,_current\n\t" \
 	"je 1f\n\t" \
 	"movw %%dx,%1\n\t" \
+	"cli\n\t" \
 	"xchgl %%ecx,_current\n\t" \
 	"ljmp %0\n\t" \
+	"sti\n\t" \
 	"cmpl %%ecx,_last_task_used_math\n\t" \
 	"jne 1f\n\t" \
 	"clts\n" \
@@ -293,6 +320,51 @@ __asm__("movw %%dx,%0\n\t" \
 
 #define set_base(ldt,base) _set_base( ((char *)&(ldt)) , base )
 #define set_limit(ldt,limit) _set_limit( ((char *)&(ldt)) , (limit-1)>>12 )
+
+extern inline void add_wait_queue(struct wait_queue ** p, struct wait_queue * wait)
+{
+	unsigned long flags;
+	struct wait_queue * tmp;
+
+	__asm__ __volatile__("pushfl ; popl %0 ; cli":"=r" (flags));
+	wait->next = *p;
+	tmp = wait;
+	while (tmp->next)
+		if ((tmp = tmp->next)->next == *p)
+			break;
+	*p = tmp->next = wait;
+	__asm__ __volatile__("pushl %0 ; popfl"::"r" (flags));
+}
+
+extern inline void remove_wait_queue(struct wait_queue ** p, struct wait_queue * wait)
+{
+	unsigned long flags;
+	struct wait_queue * tmp;
+
+	__asm__ __volatile__("pushfl ; popl %0 ; cli":"=r" (flags));
+	if (*p == wait)
+		if ((*p = wait->next) == wait)
+			*p = NULL;
+	tmp = wait;
+	while (tmp && tmp->next != wait)
+		tmp = tmp->next;
+	if (tmp)
+		tmp->next = wait->next;
+	wait->next = NULL;
+	__asm__ __volatile__("pushl %0 ; popfl"::"r" (flags));
+}
+
+extern inline void select_wait(struct wait_queue ** wait_address, select_table * p)
+{
+	struct select_table_entry * entry = p->entry + p->nr;
+
+	if (!wait_address)
+		return;
+	entry->wait_address = wait_address;
+	entry->wait.task = current;
+	add_wait_queue(wait_address,&entry->wait);
+	p->nr++;
+}
 
 static unsigned long inline _get_base(char * addr)
 {
