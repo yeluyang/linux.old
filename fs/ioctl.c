@@ -10,8 +10,9 @@
 
 #include <linux/sched.h>
 
+extern int hd_ioctl(int dev, int cmd, int arg);
 extern int tty_ioctl(int dev, int cmd, int arg);
-extern int pipe_ioctl(struct m_inode *pino, int cmd, int arg);
+extern int pipe_ioctl(struct inode *pino, int cmd, int arg);
 
 typedef int (*ioctl_ptr)(int dev,int cmd,int arg);
 
@@ -21,7 +22,7 @@ static ioctl_ptr ioctl_table[]={
 	NULL,		/* nodev */
 	NULL,		/* /dev/mem */
 	NULL,		/* /dev/fd */
-	NULL,		/* /dev/hd */
+	hd_ioctl,       /* /dev/hd */
 	tty_ioctl,	/* /dev/ttyx */
 	tty_ioctl,	/* /dev/tty */
 	NULL,		/* /dev/lp */
@@ -40,7 +41,7 @@ int sys_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
 	mode=filp->f_inode->i_mode;
 	if (!S_ISCHR(mode) && !S_ISBLK(mode))
 		return -EINVAL;
-	dev = filp->f_inode->i_zone[0];
+	dev = filp->f_inode->i_rdev;
 	if (MAJOR(dev) >= NRDEVS)
 		return -ENODEV;
 	if (!ioctl_table[MAJOR(dev)])

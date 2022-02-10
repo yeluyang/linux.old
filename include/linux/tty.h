@@ -10,14 +10,14 @@
 #define _TTY_H
 
 #define MAX_CONSOLES	8
-#define NR_SERIALS	2
+#define NR_SERIALS	4
 #define NR_PTYS		4
 
 extern int NR_CONSOLES;
 
 #include <termios.h>
 
-#define TTY_BUF_SIZE 1024
+#define TTY_BUF_SIZE 2048
 
 struct tty_queue {
 	unsigned long data;
@@ -60,14 +60,53 @@ struct tty_struct {
 	int pgrp;
 	int session;
 	int stopped;
+	int busy;
+	struct winsize winsize;
 	void (*write)(struct tty_struct * tty);
 	struct tty_queue *read_q;
 	struct tty_queue *write_q;
 	struct tty_queue *secondary;
 	};
 
+/*
+ * so that interrupts won't be able to mess up the
+ * queues, copy_to_cooked must be atomic with repect
+ * to itself, as must tty->write.
+ */
+#define TTY_WRITE_BUSY 1
+#define TTY_READ_BUSY 2
+
+#define TTY_WRITE_FLUSH(tty) \
+do { \
+	cli(); \
+	if (!EMPTY((tty)->write_q) && !(TTY_WRITE_BUSY & (tty)->busy)) { \
+		(tty)->busy |= TTY_WRITE_BUSY; \
+		sti(); \
+		(tty)->write((tty)); \
+		cli(); \
+		(tty)->busy &= ~TTY_WRITE_BUSY; \
+	} \
+	sti(); \
+} while (0)
+
+#define TTY_READ_FLUSH(tty) \
+do { \
+	cli(); \
+	if (!EMPTY((tty)->read_q) && !(TTY_READ_BUSY & (tty)->busy)) { \
+		(tty)->busy |= TTY_READ_BUSY; \
+		sti(); \
+		copy_to_cooked((tty)); \
+		cli(); \
+		(tty)->busy &= ~TTY_READ_BUSY; \
+	} \
+	sti(); \
+} while (0)
+
 extern struct tty_struct tty_table[];
 extern int fg_console;
+extern unsigned long video_num_columns;
+extern unsigned long video_num_lines;
+
 
 #define TTY_TABLE(nr) \
 (tty_table + ((nr) ? (((nr) < 64)? (nr)-1:(nr))	: fg_console))
@@ -84,7 +123,7 @@ void rs_init(void);
 void con_init(void);
 void tty_init(void);
 
-int tty_read(unsigned c, char * buf, int n);
+int tty_read(unsigned c, char * buf, int n, unsigned short flags);
 int tty_write(unsigned c, char * buf, int n);
 
 void con_write(struct tty_struct * tty);
@@ -92,8 +131,10 @@ void rs_write(struct tty_struct * tty);
 void mpty_write(struct tty_struct * tty);
 void spty_write(struct tty_struct * tty);
 
+extern void serial_open(unsigned int line);
+
 void copy_to_cooked(struct tty_struct * tty);
 
-void update_screen(void);
+void update_screen(int new_console);
 
 #endif

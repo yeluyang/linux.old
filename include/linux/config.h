@@ -4,17 +4,27 @@
 /*
  * Defines for what uname() should return 
  */
+#ifndef UTS_SYSNAME
 #define UTS_SYSNAME "Linux"
+#endif
+#ifndef UTS_NODENAME
 #define UTS_NODENAME "(none)"	/* set by sethostname() */
-#define UTS_RELEASE "0"		/* patchlevel */
-#define UTS_VERSION "0.12"
+#endif
+#include <linux/config_rel.h>
+#ifndef UTS_RELEASE
+#define UTS_RELEASE "0.95c-0" 
+#endif
+#include <linux/config_ver.h>
+#ifndef UTS_VERSION
+#define UTS_VERSION "mm/dd/yy"
+#endif
 #define UTS_MACHINE "i386"	/* hardware type */
 
 /* Don't touch these, unless you really know what your doing. */
 #define DEF_INITSEG	0x9000
 #define DEF_SYSSEG	0x1000
 #define DEF_SETUPSEG	0x9020
-#define DEF_SYSSIZE	0x3000
+#define DEF_SYSSIZE	0x4000
 
 /*
  * The root-device is no longer hard-coded. You can change the default
